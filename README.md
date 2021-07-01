@@ -95,7 +95,7 @@ sequence files to be analysed.
 There are many more detailed settings that you can access by editing the config (See below).
 
 In benchmarking mode, once the SV calls have been made they will be compared against a 
-user-supplied truthset, generating number for precision and recall.
+user-supplied truthset, generating numbers for precision and recall.
 
 To run the workflow using Docker containers supply the `-profile standard`
 argument to `nextflow run`:

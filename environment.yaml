@@ -1,3 +1,4 @@
+name: epi2melabs-wf-human-sv
 channels:
     - epi2melabs
     - bioconda
