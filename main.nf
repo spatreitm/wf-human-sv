@@ -10,20 +10,21 @@ wf-human-sv
 Usage:
     nextflow run epi2melabs/wf_human_sv [options]
 
-Script Otions:
+Script Options:
     --help
     --fastq                   DIR         FASTQ file (required)
     --reference               FILE        FASTA format reference sequence (required)
     --sample                  STR         Name for sample being analysed (default: $params.sample)
     --out_dir                 DIR         Path for output (default: $params.out_dir)
+    --mode                    STR         Switch between standard or benchmark modes. (default: $params.mode)
     --min_read_support        INT/STR     Minimum read support required to call a SV (default: auto)
     --target_bedfile          FILE        BED file, SVs will only be called in these regions (optional)
-    --mode                    STR         Switch between standard or benchmark modes. (default: $params.mode)
 
 Benchmarking:
     In benchmarking mode the calls made using the pipeline will
     be evaluated against the supplied truthset. The report will
-    be populated with the results.
+    be populated with the results. Paths to truthset files are
+    set within the config file, and may be URLs or absolute paths.
 """
 }
 
@@ -223,10 +224,23 @@ process indexVCF {
 }
 
 
+process fastcatQC {
+    label "wf_human_sv"
+    cpus 1
+    input:
+        file reads
+    output:
+        path "per_read_stats.txt", emit: stats
+    """
+    fastcat --read per_read_stats.txt $reads > /dev/null
+    """
+}
+
+
 // The following processes are for the benchmarking
 // pathway of this pipeline. Please see the documentation
 // for further details. 
-process downloadTruthset {
+process getTruthset {
     label "wf_human_sv"
     cpus 1
     output:
@@ -234,9 +248,21 @@ process downloadTruthset {
         path "*.vcf.gz.tbi",  emit: truthset_vcf_tbi
         path "*.bed",  emit: truthset_bed
     """
-    wget $params.truthset_vcf \
-    && wget $params.truthset_index \
-    && wget $params.truthset_bed
+    for item in $params.truthset_vcf $params.truthset_index $params.truthset_bed
+    do
+        if wget -q --method=HEAD \$item;
+        then
+            echo "Downloading \$item."
+            wget \$item
+        elif [ -f \$item ];
+        then
+            echo "Found \$item locally."
+            cp \$item .
+        else
+            echo "\$item cannot be found."
+            exit 1
+        fi
+    done
     """
 }
 
@@ -254,6 +280,13 @@ process intersectCallsHighconf {
         -a $truthset_bed \
         -b $calls_vcf \
         -u > eval_highconf.bed
+
+    if [ ! -s eval_highconf.bed ]
+    then
+        echo "No overlaps found between calls and truthset"
+        echo "Chr names in your reference and truthset may differ"
+        exit 1
+    fi
     """
 }
 
@@ -305,9 +338,9 @@ process report {
     label "wf_human_sv"
     cpus 1
     input:
-        file reads
         file lra_bam
         file lra_bam_index
+        file read_stats
         file eval_json
     output:
         path "wf-human-sv-report.html", emit: html
@@ -317,18 +350,32 @@ process report {
         def evalResults = eval_json.name != 'OPTIONAL_FILE' ? "--eval_results ${eval_json}" : ""
         def paramsMap = params.toMapString()
     """
-    echo '$paramsJSON' > params.json
-    fastcat --read samples_reads.txt $reads > /dev/null
+    # Explicitly get software versions
+    truvari version | sed 's/ /,/' >> versions.txt
+    mosdepth --version | sed 's/ /,/' >> versions.txt
+    fastcat --version | sed 's/^/fastcat,/' >> versions.txt
+    cuteSV --version | head -n 1 | sed 's/ /,/' >> versions.txt
+    bcftools --version | head -n 1 | sed 's/ /,/' >> versions.txt
+    bedtools --version | head -n 1 | sed 's/ /,/' >> versions.txt
+    samtools --version | head -n 1 | sed 's/ /,/' >> versions.txt
+    echo `lra -v | head -n 2 | tail -1 | cut -d ':' -f 2 | sed 's/ /lra,/'` >> versions.txt
+    echo `seqtk 2>&1 | head -n 3 | tail -n 1 | cut -d ':' -f 2 | sed 's/ /seqtk,/'` >> versions.txt
 
+    # Output nextflow params object to JSON
+    echo '$paramsJSON' > params.json
+
+    # Generate wf-human-sv aplanat static report
     report.py \
         wf-human-sv-report.html \
         $params.sample \
-        --reads_summary samples_reads.txt \
+        --reads_summary $read_stats \
         --params params.json \
+        --versions versions.txt \
         --revision $workflow.revision \
         --commit $workflow.commitId \
         $evalResults 
 
+    # Generate supplemental nanoplot report
     mkdir -p nanoplot
     NanoPlot \
         -t $task.cpus \
@@ -377,12 +424,14 @@ workflow pipeline {
         filterCalls(cuteSV.out.vcf, mosdepth.out.mosdepth_bed, target)
         sortVCF(filterCalls.out.vcf)
         indexVCF(sortVCF.out.vcf)
+        fastcatQC(reads)
     emit:
         ref = indexLRA.out.ref
         vcf = indexVCF.out.vcf_gz
         vcf_index = indexVCF.out.vcf_tbi
         bam = mapLRA.out.bam
         bam_index = mapLRA.out.bam_index
+        read_stats = fastcatQC.out.stats
 }
 
 
@@ -397,9 +446,9 @@ workflow standard {
         println("Running workflow: standard mode.")
         standard = pipeline(reference, reads, target)
         report(
-            reads, 
             standard.bam, 
-            standard.bam_index, 
+            standard.bam_index,
+            standard.read_stats,
             optional_file)
         results = report.out.html.concat(
             report.out.nanoplot,
@@ -421,7 +470,7 @@ workflow benchmark {
         println("=================================")
         println("Running workflow: benchmark mode.")
         standard = pipeline(reference, reads, target)
-        truthset = downloadTruthset()
+        truthset = getTruthset()
         filtered = excludeNonIndels(standard.vcf)
         highconf = intersectCallsHighconf(
             standard.vcf, 
@@ -434,9 +483,9 @@ workflow benchmark {
             truthset.truthset_vcf_tbi,
             highconf.calls_highconf_bed)
         report(
-            reads, 
-            standard.bam, 
-            standard.bam_index, 
+            standard.bam,
+            standard.bam_index,
+            standard.read_stats,
             truvari.out.truvari_json)
         results = report.out.html.concat(
             report.out.nanoplot,
