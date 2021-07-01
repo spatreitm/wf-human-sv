@@ -103,15 +103,15 @@ process mapLRA {
         file mmi_index
         file reads
     output:
-        path "${params.sample}.bam", emit: bam
-        path "${params.sample}.bam.bai", emit: bam_index
+        path "lra.bam", emit: bam
+        path "lra.bam.bai", emit: bam_index
     """
     catfishq -r $reads --max_mbp $params.max_bp \
     | seqtk seq -A - \
     | lra align -ONT -t $task.cpus $reference - -p s \
     | samtools addreplacerg -r \"@RG\tID:$params.sample\tSM:$params.sample\" - \
-    | samtools sort -@ $task.cpus -o ${params.sample}.bam -m 2G -
-    samtools index -@ $task.cpus ${params.sample}.bam
+    | samtools sort -@ $task.cpus -o lra.bam -m 2G -
+    samtools index -@ $task.cpus lra.bam
     """
 }
 
@@ -179,7 +179,7 @@ process filterCalls {
         path "filtered.${vcf}", emit: vcf
     script:
         def sv_types_joined = params.sv_types.join(" ")
-        def target_bed = target_bed.name != 'NO_TARGET' ? "--target_bedfile ${target_bed}" : ""
+        def target_bed = target_bed.name != 'OPTIONAL_FILE' ? "--target_bedfile ${target_bed}" : ""
     """
     get_filter_calls_command.py \
         $target_bed \
@@ -308,13 +308,13 @@ process report {
         file reads
         file lra_bam
         file lra_bam_index
-        file truvari_json
+        file eval_json
     output:
         path "wf-human-sv-report.html", emit: html
         path "nanoplot.tar.gz", emit: nanoplot
     script:
         def paramsJSON = new JsonBuilder(params).toPrettyString()
-        def evalResults = truvari_json.name != 'NO_EVAL' ? "--eval_results ${truvari_json}" : ""
+        def evalResults = eval_json.name != 'OPTIONAL_FILE' ? "--eval_results ${eval_json}" : ""
         def paramsMap = params.toMapString()
     """
     echo '$paramsJSON' > params.json
@@ -391,6 +391,7 @@ workflow standard {
         reference
         reads
         target
+        optional_file
     main:
         println("================================")
         println("Running workflow: standard mode.")
@@ -399,7 +400,7 @@ workflow standard {
             reads, 
             standard.bam, 
             standard.bam_index, 
-            file('NO_EVAL'))
+            optional_file)
         results = report.out.html.concat(
             report.out.nanoplot,
             standard.vcf, 
@@ -470,6 +471,9 @@ workflow {
         exit 1
     }
 
+    // Ready the optional file
+    OPTIONAL = file("$projectDir/data/OPTIONAL_FILE")
+
     // Checking user parameters
     println("=================================")
     println("Checking inputs")
@@ -484,7 +488,7 @@ workflow {
     // Check for target bedfile
     target = file(params.target_bedfile)
     if (!target.exists()) {
-        target = file('NO_TARGET')
+        target = OPTIONAL
     }
 
     // Check for sample name
@@ -506,7 +510,7 @@ workflow {
     // Execute workflow
     switch(params.mode) {
         case "standard": 
-            results = standard(reference, reads, target)
+            results = standard(reference, reads, target, OPTIONAL)
             output(results)
             break;
         case "benchmark": 
