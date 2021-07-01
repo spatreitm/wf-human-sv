@@ -4,14 +4,13 @@
 import argparse
 from datetime import datetime
 import json
-import subprocess
 import sys
 
 from aplanat import report
 from aplanat.components import fastcat
 import aplanat.graphics
 from bokeh.layouts import layout
-import conda_versions
+from bokeh.models import BasicTickFormatter, Range1d
 import pandas as pd
 
 
@@ -36,8 +35,11 @@ def main():
         "--commit", default='unknown',
         help="git commit of the executed workflow")
     parser.add_argument(
-        "--params", default=None,
+        "--params", default=None, required=True,
         help="A csv containing the parameter key/values")
+    parser.add_argument(
+        "--versions", required=True,
+        help="directory contained CSVs containing name,version.")
     args = parser.parse_args()
     report_doc = report.WFReport(
         "wf-human-sv report", "wf-human-sv",
@@ -85,6 +87,8 @@ def main():
     reads_summary_df = pd.read_csv(reads_summary, sep='\t')
     read_qual = fastcat.read_quality_plot(reads_summary_df)
     read_length = fastcat.read_length_plot(reads_summary_df)
+    read_length.x_range = Range1d(0, 100000)
+    read_length.xaxis.formatter = BasicTickFormatter(use_scientific=False)
     section = report_doc.add_section()
     section.markdown("## Read Quality Control")
     section.markdown("This sections displays basic QC"
@@ -114,23 +118,18 @@ def main():
     #
     # Software versions
     #
+    section = report_doc.add_section()
     section.markdown("## Software versions")
     section.markdown('''The table below highlights versions
                     of key software used within the analysis''')
-    req = [
-        'vcftools', 'samtools', 'bedtools', 'bcftools', 'cutesv',
-        'seqtk', 'lra', 'nanoplot', 'mosdepth', 'vcflib', 'truvari',
-        'catfishq', 'pyfaidx']
-    try:
-        versions = conda_versions.scrape_data(
-            as_dataframe=True, include=req)
-    except subprocess.CalledProcessError:
-        versions = pd.DataFrame(columns=['Name', 'Version', 'Build'])
-
-    section.table(versions[['Name', 'Version', 'Build']],
-                  sortable=False, paging=False,
-                  index=False, searchable=False)
-    section = report_doc.add_section()
+    versions = list()
+    if args.versions is not None:
+        with open(args.versions) as fh:
+            for line in fh.readlines():
+                name, version = line.strip().split(',')
+                versions.append((name, version))
+    versions = pd.DataFrame(versions, columns=('Name', 'Version'))
+    section.table(versions, index=False)
 
     #
     # write report
