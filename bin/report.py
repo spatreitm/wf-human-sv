@@ -64,13 +64,36 @@ def main():
         section.markdown("This sections displays the truvari"
                          " evaluation metrics for your SV calls.")
         exec_summary = aplanat.graphics.InfoGraphItems()
-        exec_summary.append("TP-base", data['TP-base'], 'chart-pie')
-        exec_summary.append("TP-call", data['TP-call'], "chart-pie")
-        exec_summary.append("FP", data['FP'], "chart-pie")
-        exec_summary.append("FN", data['FN'], "chart-pie")
-        exec_summary.append("F1", data['f1'], "chart-pie")
-        exec_summary.append("Precision", data['precision'], "chart-pie")
-        exec_summary.append("Recall", data['recall'], "chart-pie")
+        exec_summary.append(
+            "TP-call",
+            "{:.2f}".format(data['TP-call']),
+            "chart-pie"
+        )
+        exec_summary.append(
+            "FP",
+            "{:.2f}".format(data['FP']),
+            "chart-pie"
+        )
+        exec_summary.append(
+            "FN",
+            "{:.2f}".format(data['FN']),
+            "chart-pie"
+        )
+        exec_summary.append(
+            "F1",
+            "{:.2f}".format(data['f1']),
+            "chart-pie"
+        )
+        exec_summary.append(
+            "Precision",
+            "{:.2f}".format(data['precision']),
+            "chart-pie"
+        )
+        exec_summary.append(
+            "Recall",
+            "{:.2f}".format(data['recall']),
+            "chart-pie"
+        )
         exec_plot = aplanat.graphics.infographic(
             exec_summary.values(), ncols=4)
         section.plot(exec_plot, key="exec-plot")
