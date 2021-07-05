@@ -111,7 +111,7 @@ process mapLRA {
     | seqtk seq -A - \
     | lra align -ONT -t $task.cpus $reference - -p s \
     | samtools addreplacerg -r \"@RG\tID:$params.sample\tSM:$params.sample\" - \
-    | samtools sort -@ $task.cpus -o lra.bam -m 2G -
+    | samtools sort -@ $task.cpus -o lra.bam -
     samtools index -@ $task.cpus lra.bam
     """
 }
@@ -398,8 +398,7 @@ process output {
     label "wf_human_sv"
 
     // publish inputs to output directory
-    publishDir "${params.out_dir}", mode: 'copy', pattern: "*", saveAs: { 
-        f -> params.sample ? "${params.sample}-${f}" : "${f}" }
+    publishDir "${params.out_dir}", mode: 'copy', pattern: "*"
     input:
         file fname
     output:
