@@ -14,7 +14,7 @@ Script Options:
     --help
     --fastq                   DIR         FASTQ file (required)
     --reference               FILE        FASTA format reference sequence (required)
-    --sample                  STR         Name for sample being analysed (default: $params.sample)
+    --sample                  STR         Name for sample being analysed (optional)
     --out_dir                 DIR         Path for output (default: $params.out_dir)
     --mode                    STR         Switch between standard or benchmark modes. (default: $params.mode)
     --min_read_support        INT/STR     Minimum read support required to call a SV (default: auto)
@@ -77,11 +77,11 @@ process indexLRA {
     input:
         file reference
     output:
-        path "${reference.simpleName}.fna", emit: ref
-        path "${reference.simpleName}.fna.gli", emit: lra_index
-        path "${reference.simpleName}.fna.mmi", emit: mmi_index
+        path "${reference.simpleName}", emit: ref
+        path "${reference.simpleName}.gli", emit: lra_index
+        path "${reference.simpleName}.mmi", emit: mmi_index
     script:
-        def simpleRef = reference.simpleName + '.fna'
+        def simpleRef = reference.simpleName
     """
     cp -L $reference $simpleRef
     if [[ $reference == *.gz ]]
@@ -106,11 +106,13 @@ process mapLRA {
     output:
         path "lra.bam", emit: bam
         path "lra.bam.bai", emit: bam_index
+    script:
+        def sample = params.sample ? params.sample : 'sample'
     """
     catfishq -r $reads --max_mbp $params.max_bp \
     | seqtk seq -A - \
     | lra align -ONT -t $task.cpus $reference - -p s \
-    | samtools addreplacerg -r \"@RG\tID:$params.sample\tSM:$params.sample\" - \
+    | samtools addreplacerg -r \"@RG\tID:$sample\tSM:$sample\" - \
     | samtools sort -@ $task.cpus -o lra.bam -
     samtools index -@ $task.cpus lra.bam
     """
@@ -128,10 +130,11 @@ process cuteSV {
         path "cutesv.vcf", emit: vcf
     script:
         def simpleRef = reference.simpleName
+        def sample = params.sample ? params.sample : 'sample'
     """
     cuteSV \
         --threads $task.cpus \
-        --sample $params.sample \
+        --sample $sample \
         --retain_work_dir \
         --report_readid \
         --genotype \
@@ -156,13 +159,16 @@ process mosdepth {
     input:
         file bam
         file bam_index
+        file target_bed
     output:
         path "depth.regions.bed.gz", emit: mosdepth_bed
+    script:
+        def target_bed = target_bed.name != 'OPTIONAL_FILE' ? "${target_bed}" : 1000000
     """
 	mosdepth \
         -x \
         -t $task.cpus \
-        -b 1000000 \
+        -b $target_bed \
         depth \
         $bam
 	"""
@@ -177,7 +183,7 @@ process filterCalls {
         file mosdepth_bed
         file target_bed
     output:
-        path "filtered.${vcf}", emit: vcf
+        path "${vcf.simpleName}_filtered.vcf", emit: vcf
     script:
         def sv_types_joined = params.sv_types.join(" ")
         def target_bed = target_bed.name != 'OPTIONAL_FILE' ? "--target_bedfile ${target_bed}" : ""
@@ -192,7 +198,7 @@ process filterCalls {
         --min_read_support $params.min_read_support \
         --min_read_support_limit $params.min_read_support_limit > filter.sh
 
-    bash filter.sh > filtered.${vcf}
+    bash filter.sh > ${vcf.simpleName}_filtered.vcf
 	"""
 }
 
@@ -203,9 +209,9 @@ process sortVCF {
     input:
         file vcf
     output:
-        path "sorted.${vcf}", emit: vcf
+        path "${vcf.simpleName}_sorted.vcf", emit: vcf
     """
-    vcfsort $vcf > sorted.${vcf}
+    vcfsort $vcf > ${vcf.simpleName}_sorted.vcf
     """
 }
 
@@ -320,16 +326,19 @@ process truvari {
         file calls_highconf_bed
     output:
         path "summary.json", emit: truvari_json
+    script:
+        def sample = params.sample ? params.sample : 'sample'
     """
-    truvari bench \
+    TRUVARI=\$(which truvari)
+    python \$TRUVARI bench \
         --passonly \
         --pctsim 0 \
         -b $truthset_vcf \
         -c $calls_vcf \
         -f $reference \
-        -o $params.sample \
+        -o $sample \
         --includebed $calls_highconf_bed
-    mv $params.sample/summary.txt summary.json
+    mv $sample/summary.txt summary.json
     """
 }
 
@@ -338,8 +347,9 @@ process report {
     label "wf_human_sv"
     cpus 1
     input:
-        file lra_bam
-        file lra_bam_index
+        file vcf
+        file bam
+        file bam_index
         file read_stats
         file eval_json
     output:
@@ -349,9 +359,11 @@ process report {
         def paramsJSON = new JsonBuilder(params).toPrettyString()
         def evalResults = eval_json.name != 'OPTIONAL_FILE' ? "--eval_results ${eval_json}" : ""
         def paramsMap = params.toMapString()
+        def sample = params.sample ? params.sample : 'sample'
     """
     # Explicitly get software versions
-    truvari version | sed 's/ /,/' >> versions.txt
+    TRUVARI=\$(which truvari)
+    python \$TRUVARI version | sed 's/ /,/' >> versions.txt
     mosdepth --version | sed 's/ /,/' >> versions.txt
     fastcat --version | sed 's/^/fastcat,/' >> versions.txt
     cuteSV --version | head -n 1 | sed 's/ /,/' >> versions.txt
@@ -367,7 +379,8 @@ process report {
     # Generate wf-human-sv aplanat static report
     report.py \
         wf-human-sv-report.html \
-        $params.sample \
+        $sample \
+        $vcf \
         --reads_summary $read_stats \
         --params params.json \
         --versions versions.txt \
@@ -379,11 +392,11 @@ process report {
     mkdir -p nanoplot
     NanoPlot \
         -t $task.cpus \
-        -p nanoplot/${params.sample}_ \
-        --bam $lra_bam \
+        -p nanoplot/${sample}_ \
+        --bam $bam \
         --raw \
         --N50 \
-        --title $params.sample \
+        --title $sample \
         --downsample 100000
     tar -czvf nanoplot.tar.gz nanoplot
     """
@@ -398,7 +411,8 @@ process output {
     label "wf_human_sv"
 
     // publish inputs to output directory
-    publishDir "${params.out_dir}", mode: 'copy', pattern: "*"
+    publishDir "${params.out_dir}", mode: 'copy', pattern: "*", saveAs: { 
+        f -> params.sample ? "${params.sample}-${f}" : "${f}" }
     input:
         file fname
     output:
@@ -419,7 +433,7 @@ workflow pipeline {
         indexLRA(reference)
         mapLRA(indexLRA.out.ref, indexLRA.out.lra_index, indexLRA.out.mmi_index, reads)
         cuteSV(mapLRA.out.bam, mapLRA.out.bam_index, indexLRA.out.ref)
-        mosdepth(mapLRA.out.bam, mapLRA.out.bam_index)
+        mosdepth(mapLRA.out.bam, mapLRA.out.bam_index, target)
         filterCalls(cuteSV.out.vcf, mosdepth.out.mosdepth_bed, target)
         sortVCF(filterCalls.out.vcf)
         indexVCF(sortVCF.out.vcf)
@@ -445,6 +459,7 @@ workflow standard {
         println("Running workflow: standard mode.")
         standard = pipeline(reference, reads, target)
         report(
+            standard.vcf,
             standard.bam, 
             standard.bam_index,
             standard.read_stats,
@@ -482,6 +497,7 @@ workflow benchmark {
             truthset.truthset_vcf_tbi,
             highconf.calls_highconf_bed)
         report(
+            standard.vcf,
             standard.bam,
             standard.bam_index,
             standard.read_stats,
@@ -537,12 +553,6 @@ workflow {
     target = file(params.target_bedfile)
     if (!target.exists()) {
         target = OPTIONAL
-    }
-
-    // Check for sample name
-    if (!params.sample) {
-        println("--sample: Not set, please supply a name")
-        exit 1
     }
 
     // Check min_read_support
