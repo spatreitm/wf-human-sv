@@ -19,6 +19,7 @@ Script Options:
     --mode                    STR         Switch between standard or benchmark modes. (default: $params.mode)
     --min_read_support        INT/STR     Minimum read support required to call a SV (default: auto)
     --target_bedfile          FILE        BED file, SVs will only be called in these regions (optional)
+    --report_name             STR     Optional report suffix (default: $params.report_name)
 
 Benchmarking:
     In benchmarking mode the calls made using the pipeline will
@@ -353,13 +354,15 @@ process report {
         file read_stats
         file eval_json
     output:
-        path "wf-human-sv-report.html", emit: html
+        path "wf-human-sv-*.html", emit: html
         path "nanoplot.tar.gz", emit: nanoplot
     script:
         def paramsJSON = new JsonBuilder(params).toPrettyString()
         def evalResults = eval_json.name != 'OPTIONAL_FILE' ? "--eval_results ${eval_json}" : ""
         def paramsMap = params.toMapString()
         def sample = params.sample ? params.sample : 'sample'
+        def report_name = "wf-human-sv-" + params.report_name + '.html'
+
     """
     # Explicitly get software versions
     TRUVARI=\$(which truvari)
@@ -378,7 +381,7 @@ process report {
 
     # Generate wf-human-sv aplanat static report
     report.py \
-        wf-human-sv-report.html \
+        $report_name \
         $sample \
         $vcf \
         --reads_summary $read_stats \
