@@ -19,7 +19,7 @@ Script Options:
     --mode                    STR         Switch between standard or benchmark modes. (default: $params.mode)
     --min_read_support        INT/STR     Minimum read support required to call a SV (default: auto)
     --target_bedfile          FILE        BED file, SVs will only be called in these regions (optional)
-    --report_name             STR     Optional report suffix (default: $params.report_name)
+    --report_name             STR         Optional report suffix (default: $params.report_name)
 
 Benchmarking:
     In benchmarking mode the calls made using the pipeline will
@@ -298,6 +298,19 @@ process intersectCallsHighconf {
 }
 
 
+process getAllChromosomesBed {
+    label "wf_human_sv"
+    cpus 1
+    input:
+        file reference
+    output:
+        path "allChromosomes.bed", emit: all_chromosomes_bed
+    """
+    faidx --transform bed $reference > allChromosomes.bed
+    """
+}
+
+
 process excludeNonIndels {
     label "wf_human_sv"
     cpus 1
@@ -324,7 +337,7 @@ process truvari {
         file calls_vcf_tbi
         file truthset_vcf
         file truthset_vcf_tbi
-        file calls_highconf_bed
+        file include_bed
     output:
         path "summary.json", emit: truvari_json
     script:
@@ -338,7 +351,7 @@ process truvari {
         -c $calls_vcf \
         -f $reference \
         -o $sample \
-        --includebed $calls_highconf_bed
+        --includebed $include_bed
     mv $sample/summary.txt summary.json
     """
 }
@@ -489,16 +502,19 @@ workflow benchmark {
         standard = pipeline(reference, reads, target)
         truthset = getTruthset()
         filtered = excludeNonIndels(standard.vcf)
-        highconf = intersectCallsHighconf(
-            standard.vcf, 
-            truthset.truthset_bed)
+        if (params.benchmarkUseTruthsetBed) {
+            bedToUse = truthset.truthset_bed
+        } else {
+            bedToUse = getAllChromosomesBed(
+                reference).all_chromosomes_bed
+        }
         truvari(
             standard.ref,
             filtered.indels_only_vcf_gz,
             filtered.indels_only_vcf_tbi,
             truthset.truthset_vcf_gz,
             truthset.truthset_vcf_tbi,
-            highconf.calls_highconf_bed)
+            bedToUse)
         report(
             standard.vcf,
             standard.bam,

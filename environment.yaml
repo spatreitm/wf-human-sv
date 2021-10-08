@@ -24,5 +24,6 @@ dependencies:
     - NanoPlot==1.38.0
     - pip:
         - catfishq
+        - pyfaidx
         - Truvari
         
