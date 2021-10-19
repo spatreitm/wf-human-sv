@@ -1,0 +1,216 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema",
+    "$id": "https://raw.githubusercontent.com/./master/nextflow_schema.json",
+    "title": ". pipeline parameters",
+    "description": "",
+    "type": "object",
+    "definitions": {
+        "input_output_options": {
+            "title": "Input/output options",
+            "type": "object",
+            "fa_icon": "fas fa-terminal",
+            "description": "Define where and how the pipeline should find input data and save output data.",
+            "properties": {
+                "fastq": {
+                    "type": "string",
+                    "description": "Directory containing fastq input files. May contain fastq files directly or directories name barcodeXX relating to independent samples",
+                    "help_text": "If directories named \\\"barcode*\\\" are found under the `--fastq` directory the data is assumed to be multiplex and each barcode directory will be processed independently. If `.fastq(.gz)` files are found under the `--fastq` directory the sample is assumed to not be multiplexed. In this second case `--samples` should be a simple name rather than a CSV file."
+                },
+                "reference": {
+                    "type": "string",
+                    "description": "FASTA format reference sequence"
+                },
+                "samples": {
+                    "type": "string",
+                    "description": "CSV file with columns named `barcode` and `sample_name`. (or simply a sample name for non-multiplexed data)"
+                },
+                "out_dir": {
+                    "type": "string",
+                    "default": "output",
+                    "description": "Directory for output of all user-facing files."
+                },
+                "report_name": {
+                    "type": "string",
+                    "default": "report",
+                    "description": "Optional report suffix"
+                },
+                "sanitize_fastq": {
+                    "type": "boolean",
+                    "description": "Use additional heuristics to identify barcodes from file paths",
+                    "help_text": "Enabling this option will group together files into samples by the presence of strings of the form `barcodeXXX` present in filenames, rather than simply files grouped into directories (as output by MinKNOW and the Guppy basecaller)."
+                }
+            },
+            "required": [
+                "fastq",
+                "reference"
+            ]
+        },
+        "benchmarking_options": {
+            "title": "Benchmarking options",
+            "type": "object",
+            "description": "",
+            "default": "",
+            "properties": {
+                "benchmark": {
+                    "type": "boolean",
+                    "description": "Switch between standard or benchmark modes",
+                    "help_text": "In benchmarking mode the calls made using the pipeline will be evaluated against the supplied truthset. The report will be populated with the results. Paths to truthset files are set within the config file, and may be URLs or absolute paths."
+                },
+                "target_bedfile": {
+                    "type": "string",
+                    "default": "NO_TARGET",
+                    "description": "BED file, SVs will only be called in these regions"
+                },
+                "benchmarkUseTruthsetBed": {
+                    "type": "boolean",
+                    "description": "Calculate benchmarks using the truthset BED rather than an auto-generated bedfile covering reference contigs"
+                },
+                "truthset_vcf": {
+                    "type": "string",
+                    "default": "https://ftp-trace.ncbi.nlm.nih.gov/giab/ftp/data/AshkenazimTrio/analysis/NIST_SVs_Integration_v0.6/HG002_SVs_Tier1_v0.6.vcf.gz",
+                    "description": "The `truth` VCF to use for benchmarking"
+                },
+                "truthset_index": {
+                    "type": "string",
+                    "default": "https://ftp-trace.ncbi.nlm.nih.gov/giab/ftp/data/AshkenazimTrio/analysis/NIST_SVs_Integration_v0.6/HG002_SVs_Tier1_v0.6.vcf.gz.tbi",
+                    "description": "The `truth` VCF index to use for benchmarking"
+                },
+                "truthset_bed": {
+                    "type": "string",
+                    "default": "https://ftp-trace.ncbi.nlm.nih.gov/giab/ftp/data/AshkenazimTrio/analysis/NIST_SVs_Integration_v0.6/HG002_SVs_Tier1_v0.6.bed",
+                    "description": "The `truth` VED to use for benchmarking"
+                }
+            },
+            "fa_icon": "fas fa-balance-scale"
+        },
+        "advanced_options": {
+            "title": "Advanced options",
+            "type": "object",
+            "fa_icon": "fas fa-dna",
+            "description": "Algorithm options",
+            "properties": {
+                "max_bp": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Maximum BP to use per sample (0 is all)"
+                },
+                "min_len": {
+                    "type": "integer",
+                    "default": 200,
+                    "description": "Minimum read length to retain for calling"
+                },
+                "max_len": {
+                    "type": "integer",
+                    "default": 999999,
+                    "description": "Maximum read length to retain for calling"
+                },
+                "min_sv_length": {
+                    "type": "integer",
+                    "default": 30,
+                    "description": "Minimum SV length to retain after calling"
+                },
+                "max_sv_length": {
+                    "type": "integer",
+                    "default": 100000,
+                    "description": "Maximum SV length to retain after calling"
+                },
+                "min_read_support": {
+                    "type": "string",
+                    "default": "auto",
+                    "description": "Minimum read support required to call a SV"
+                },
+                "min_read_support_limit": {
+                    "type": "integer",
+                    "default": 2,
+                    "description": "Minimum read depth needed to retain an SV call"
+                },
+                "max_cluster_bias_INS": {
+                    "type": "integer",
+                    "default": 100,
+                    "hidden": true
+                },
+                "diff_ratio_merging_INS": {
+                    "type": "number",
+                    "default": 0.3,
+                    "hidden": true
+                },
+                "max_cluster_bias_DEL": {
+                    "type": "integer",
+                    "default": 200,
+                    "hidden": true
+                },
+                "diff_ratio_merging_DEL": {
+                    "type": "number",
+                    "default": 0.5,
+                    "hidden": true
+                },
+                "sv_types": {
+                    "type": "string",
+                    "default": "DEL,INS",
+                    "hidden": true
+                }
+            }
+        },
+        "generic_options": {
+            "title": "Generic options",
+            "type": "object",
+            "fa_icon": "fas fa-file-import",
+            "description": "Less common options for the pipeline, typically set in a config file.",
+            "help_text": "These options are common to all nf-core pipelines and allow you to customise some of the core preferences for how the pipeline runs.\n\nTypically these options would be set in a Nextflow config file loaded for all pipeline runs, such as `~/.nextflow/config`.",
+            "properties": {
+                "threads": {
+                    "type": "integer",
+                    "default": 2,
+                    "description": "Max number of threads to use for each process."
+                },
+                "help": {
+                    "type": "boolean",
+                    "description": "Display help text.",
+                    "fa_icon": "fas fa-question-circle"
+                }
+            }
+        }
+    },
+    "allOf": [
+        {
+            "$ref": "#/definitions/input_output_options"
+        },
+        {
+            "$ref": "#/definitions/benchmarking_options"
+        },
+        {
+            "$ref": "#/definitions/advanced_options"
+        },
+        {
+            "$ref": "#/definitions/generic_options"
+        }
+    ],
+    "properties": {
+        "aws_queue": {
+            "type": "string",
+            "hidden": true
+        },
+        "aws_image_prefix": {
+            "type": "string",
+            "hidden": true
+        },
+        "wfversion": {
+            "type": "string",
+            "default": "v0.0.3",
+            "hidden": true
+        },
+        "monochrome_logs": {
+            "type": "boolean",
+            "hidden": true
+        },
+        "validate_params": {
+            "type": "boolean",
+            "default": true,
+            "hidden": true
+        },
+        "show_hidden_params": {
+            "type": "boolean",
+            "hidden": true
+        }
+    }
+}

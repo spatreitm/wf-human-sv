@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 import sys
 
+import aplanat
 from aplanat import bio, hist, report
 from aplanat.components import fastcat
 import aplanat.graphics
@@ -68,6 +69,7 @@ def get_sv_karyograms(vcf_df, sv_types, sv_colours):
             [col],
             alpha=0.2,
             height=300)
+        aplanat.export_jsx(plot, f'{sv[0]}_karyogram.jsx')
         karyograms.append(plot)
     return karyograms
 
@@ -86,6 +88,7 @@ def get_sv_size_plots(vcf_df, sv_types, sv_colours):
             title="{} SV lengths".format(sv[1]),
             x_axis_label='log10(SV length / bases)',
             y_axis_label='count')
+        aplanat.export_jsx(plot, f'{sv[0]}_size.jsx')
         length_plots.append(plot)
     return length_plots
 
@@ -97,14 +100,16 @@ def main():
         "output",
         help="Report output file.")
     parser.add_argument(
-        "sample_name")
-    parser.add_argument(
-        "vcf"),
+        "--vcf",
+        nargs='+',
+        required=True)
     parser.add_argument(
         "--reads_summary",
+        nargs='+',
         required=True)
     parser.add_argument(
         "--eval_results",
+        nargs='+',
         required=False)
     parser.add_argument(
         "--revision", default='unknown',
@@ -123,82 +128,96 @@ def main():
         "wf-human-sv report", "wf-human-sv",
         revision=args.revision, commit=args.commit)
 
-    #
-    # Front matter
-    #
-    section = report_doc.add_section()
-    section.markdown(f"```Sample: {args.sample_name}```")
-    section.markdown(f"```Date: {datetime.today().strftime('%Y-%m-%d')}```")
+    for index, sample in enumerate(zip(args.vcf, args.reads_summary)):
+        sample_name = sample[0].split('.')[0]
+        sample_vcf = sample[0]
+        sample_summary = sample[1]
 
-    #
-    # Input dataset QC
-    #
-    reads_summary = args.reads_summary
-    reads_summary_df = pd.read_csv(reads_summary, sep='\t')
-    read_qual = fastcat.read_quality_plot(reads_summary_df)
-    read_length = fastcat.read_length_plot(reads_summary_df)
-    read_length.x_range = Range1d(0, 100000)
-    read_length.xaxis.formatter = BasicTickFormatter(use_scientific=False)
-    section = report_doc.add_section()
-    section.markdown("## Read Quality Control")
-    section.markdown("This sections displays basic QC"
-                     " metrics indicating read data quality.")
-    section.plot(
-        layout(
+        #
+        # Front matter
+        #
+        section = report_doc.add_section()
+        section.markdown(
+            f"## Sample: {sample_name}")
+        section.markdown(
+            f"```Date: {datetime.today().strftime('%Y-%m-%d')}```")
+
+        #
+        # Input dataset QC
+        #
+        reads_summary_df = pd.read_csv(sample_summary, sep='\t')
+        read_qual = fastcat.read_quality_plot(reads_summary_df)
+        read_length = fastcat.read_length_plot(reads_summary_df)
+        read_length.x_range = Range1d(0, 100000)
+        read_length.xaxis.formatter = BasicTickFormatter(use_scientific=False)
+        section = report_doc.add_section()
+        section.markdown("### Read Quality Control")
+        section.markdown(
+            "This sections displays basic QC"
+            " metrics indicating read data quality.")
+        section.plot(layout(
             [[read_length, read_qual]],
             sizing_mode="stretch_width")
-    )
+        )
 
-    #
-    # Variant calls
-    #
-    section = report_doc.add_section()
-    section.markdown("## Variant calling results")
-    section.markdown("This section displays a summary view"
-                     " of the variant calls made by cuteSV.")
+        #
+        # Variant calls
+        #
+        section = report_doc.add_section()
+        section.markdown("### Variant calling results")
+        section.markdown(
+            "This section displays a summary view"
+            " of the variant calls made by cuteSV.")
 
-    chroms = [str(x) for x in range(1, 23)] + ['X', 'Y']
-    sv_types = (('INS', 'Insertion'), ('DEL', 'Deletion'))
-    sv_colours = ['red', 'green']
+        chroms = [str(x) for x in range(1, 23)] + ['X', 'Y']
+        sv_types = (('INS', 'Insertion'), ('DEL', 'Deletion'))
+        sv_colours = ['red', 'green']
 
-    vcf_df = read_vcf(args.vcf)
-    vcf_df = expand_column(vcf_df)
-    vcf_df = vcf_df.drop('RNAMES', 1)
-    vcf_df['CHROM'] = vcf_df['CHROM'].astype(str)
-    vcf_df['SVLEN'] = vcf_df['SVLEN'].astype(int)
-    vcf_df = vcf_df.loc[vcf_df['CHROM'].isin(chroms)]
+        vcf_df = read_vcf(sample_vcf)
+        vcf_df = expand_column(vcf_df)
+        vcf_df = vcf_df.drop('RNAMES', 1)
+        vcf_df['CHROM'] = vcf_df['CHROM'].astype(str)
+        vcf_df['SVLEN'] = vcf_df['SVLEN'].astype(int)
+        vcf_df = vcf_df.loc[vcf_df['CHROM'].isin(chroms)]
 
-    table = get_sv_summary_table(vcf_df)
-    karyograms = gridplot(
-        get_sv_karyograms(vcf_df, sv_types, sv_colours),
-        ncols=2)
-    size_plots = gridplot(
-        get_sv_size_plots(vcf_df, sv_types, sv_colours),
-        ncols=2)
+        table = get_sv_summary_table(vcf_df)
+        karyograms = gridplot(
+            get_sv_karyograms(vcf_df, sv_types, sv_colours),
+            ncols=2)
+        size_plots = gridplot(
+            get_sv_size_plots(vcf_df, sv_types, sv_colours),
+            ncols=2)
 
-    section.table(
-        table,
-        index=True,
-        sortable=False,
-        paging=False,
-        searchable=False)
-    section.plot(
-        layout(
-            [karyograms],
-            [size_plots],
-            sizing_mode="stretch_width"))
+        section.table(
+            table,
+            index=True,
+            sortable=False,
+            paging=False,
+            searchable=False)
+        section.plot(
+            layout(
+                [karyograms],
+                [size_plots],
+                sizing_mode="stretch_width"))
 
-    #
-    # Evaluation results
-    #
-    section.markdown("## Evaluation results")
-    if args.eval_results:
+        if not args.eval_results:
+            section.markdown(
+                "This report was generated without evaluation"
+                " results. To see them, re-run the workflow with"
+                " --mode benchmark set.")
+            continue
+
+        #
+        # Evaluation results
+        #
+        section.markdown("### Evaluation results")
         data = None
-        with open(args.eval_results) as f:
+        with open(args.eval_results[index]) as f:
             data = json.load(f)
         section = report_doc.add_section()
-        section.markdown("This sections displays the truvari"
-                         " evaluation metrics for your SV calls.")
+        section.markdown(
+            "This sections displays the truvari"
+            " evaluation metrics for your SV calls.")
         exec_summary = aplanat.graphics.InfoGraphItems()
         exec_summary.append(
             "TP-call",
@@ -233,11 +252,6 @@ def main():
         exec_plot = aplanat.graphics.infographic(
             exec_summary.values(), ncols=4)
         section.plot(exec_plot, key="exec-plot")
-    else:
-        section.markdown(
-            "This report was generated without evaluation"
-            " results. To see them, re-run the workflow with"
-            " --mode benchmark set.")
 
     #
     # Params reporting
