@@ -1,77 +1,32 @@
 #!/usr/bin/env nextflow
-import groovy.json.JsonBuilder
 
+import groovy.json.JsonBuilder
 nextflow.enable.dsl = 2
 
-def helpMessage() {
-    log.info """
-wf-human-sv
-
-Usage:
-    nextflow run epi2melabs/wf_human_sv [options]
-
-Script Options:
-    --help
-    --fastq                   DIR         FASTQ file (required)
-    --reference               FILE        FASTA format reference sequence (required)
-    --sample                  STR         Name for sample being analysed (optional)
-    --out_dir                 DIR         Path for output (default: $params.out_dir)
-    --mode                    STR         Switch between standard or benchmark modes. (default: $params.mode)
-    --min_read_support        INT/STR     Minimum read support required to call a SV (default: auto)
-    --target_bedfile          FILE        BED file, SVs will only be called in these regions (optional)
-    --report_name             STR         Optional report suffix (default: $params.report_name)
-
-Benchmarking:
-    In benchmarking mode the calls made using the pipeline will
-    be evaluated against the supplied truthset. The report will
-    be populated with the results. Paths to truthset files are
-    set within the config file, and may be URLs or absolute paths.
-"""
-}
-
-
-// Workflow utilities
-def getFastq(path) {
-    reads = file("${path}{**,.}/*.{fastq,fastq.gz,fq,fq.gz}", type: 'file')
-    // If we have found some files, return them
-    if (reads) {
-        println("--fastq: Detected folder with ${reads.size()} input file(s).")
-        return reads
-    }
-    // If we haven't found a list of fastq, perhaps it is a file
-    reads = file("${path}", type: 'file')
-    if (reads.exists()) {
-        println("--fastq: Single input file detected.")
-        return reads
-    }
-    println("--fastq: File(s) not detected, check path.")
-    return false
-}
-
-
-def getReference(path) {
-    reference = file(params.reference, type: "file")
-    if (!reference.exists()) {
-        println("--reference: File not detected, check path.")
-        return false
-    }
-    return reference
-}
-
-
-def checkMinReadSupport(min_read_support) {
-    if (min_read_support.toString().isInteger()) {
-        return min_read_support
-    } else if (min_read_support !== 'auto') {
-        println("--min_read_support: Must be integer or 'auto'.")
-        return false
-    } else {
-        return min_read_support
-    }
-}
+include { fastq_ingress } from './lib/fastqingress'
 
 
 // Workflow processes
+process combineFilterFastq {
+    label "wf_human_sv"
+    cpus 1
+    input:
+        tuple path(directory), val(sample_name)
+    output:
+        path "${sample_name}.fastq", emit: filtered
+        path "${sample_name}.stats", emit: stats
+    """
+    fastcat \
+        -a $params.min_len \
+        -b $params.max_len \
+        -q 10 \
+        -s ${sample_name} \
+        -r ${sample_name}.stats \
+        -x ${directory} > ${sample_name}.fastq
+    """
+}
+
+
 process indexLRA {
     label "wf_human_sv"
     cpus 1
@@ -105,17 +60,17 @@ process mapLRA {
         file mmi_index
         file reads
     output:
-        path "lra.bam", emit: bam
-        path "lra.bam.bai", emit: bam_index
+        path "*lra.bam", emit: bam
+        path "*lra.bam.bai", emit: bam_index
     script:
-        def sample = params.sample ? params.sample : 'sample'
+        def name = reads.simpleName
     """
     catfishq -r $reads --max_mbp $params.max_bp \
     | seqtk seq -A - \
     | lra align -ONT -t $task.cpus $reference - -p s \
-    | samtools addreplacerg -r \"@RG\tID:$sample\tSM:$sample\" - \
-    | samtools sort -@ $task.cpus -o lra.bam -
-    samtools index -@ $task.cpus lra.bam
+    | samtools addreplacerg -r \"@RG\tID:$name\tSM:$name\" - \
+    | samtools sort -@ $task.cpus -o ${name}.lra.bam -
+    samtools index -@ $task.cpus ${name}.lra.bam
     """
 }
 
@@ -128,14 +83,13 @@ process cuteSV {
         file bam_index
         file reference
     output:
-        path "cutesv.vcf", emit: vcf
+        path "*.cutesv.vcf", emit: vcf
     script:
-        def simpleRef = reference.simpleName
-        def sample = params.sample ? params.sample : 'sample'
+        def name = bam.simpleName
     """
     cuteSV \
         --threads $task.cpus \
-        --sample $sample \
+        --sample $name \
         --retain_work_dir \
         --report_readid \
         --genotype \
@@ -148,7 +102,7 @@ process cuteSV {
         --diff_ratio_merging_DEL $params.diff_ratio_merging_DEL \
         $bam \
         $reference \
-        cutesv.vcf \
+        ${name}.cutesv.vcf \
         .
 	"""
 }
@@ -162,15 +116,16 @@ process mosdepth {
         file bam_index
         file target_bed
     output:
-        path "depth.regions.bed.gz", emit: mosdepth_bed
+        path "*.regions.bed.gz", emit: mosdepth_bed
     script:
+        def name = bam.simpleName
         def target_bed = target_bed.name != 'OPTIONAL_FILE' ? "${target_bed}" : 1000000
     """
 	mosdepth \
         -x \
         -t $task.cpus \
         -b $target_bed \
-        depth \
+        $name \
         $bam
 	"""
 }
@@ -184,9 +139,10 @@ process filterCalls {
         file mosdepth_bed
         file target_bed
     output:
-        path "${vcf.simpleName}_filtered.vcf", emit: vcf
+        path "*.filtered.vcf", emit: vcf
     script:
-        def sv_types_joined = params.sv_types.join(" ")
+        def name = vcf.simpleName
+        def sv_types_joined = params.sv_types.split(',').join(" ")
         def target_bed = target_bed.name != 'OPTIONAL_FILE' ? "--target_bedfile ${target_bed}" : ""
     """
     get_filter_calls_command.py \
@@ -199,7 +155,7 @@ process filterCalls {
         --min_read_support $params.min_read_support \
         --min_read_support_limit $params.min_read_support_limit > filter.sh
 
-    bash filter.sh > ${vcf.simpleName}_filtered.vcf
+    bash filter.sh > ${name}.filtered.vcf
 	"""
 }
 
@@ -210,9 +166,11 @@ process sortVCF {
     input:
         file vcf
     output:
-        path "${vcf.simpleName}_sorted.vcf", emit: vcf
+        path "*.sorted.vcf", emit: vcf
+    script:
+        def name = vcf.simpleName
     """
-    vcfsort $vcf > ${vcf.simpleName}_sorted.vcf
+    vcfsort $vcf > ${name}.sorted.vcf
     """
 }
 
@@ -227,19 +185,6 @@ process indexVCF {
         path "${vcf}.gz.tbi", emit: vcf_tbi
     """
     cat $vcf | bgziptabix ${vcf}.gz
-    """
-}
-
-
-process fastcatQC {
-    label "wf_human_sv"
-    cpus 1
-    input:
-        file reads
-    output:
-        path "per_read_stats.txt", emit: stats
-    """
-    fastcat --read per_read_stats.txt $reads > /dev/null
     """
 }
 
@@ -281,12 +226,14 @@ process intersectCallsHighconf {
         file calls_vcf
         file truthset_bed
     output:
-        path "eval_highconf.bed", emit: calls_highconf_bed
+        path "*.eval_highconf.bed", emit: calls_highconf_bed
+    script:
+        def name = calls_vcf.simpleName
     """
     bedtools intersect \
         -a $truthset_bed \
         -b $calls_vcf \
-        -u > eval_highconf.bed
+        -u > ${name}.eval_highconf.bed
 
     if [ ! -s eval_highconf.bed ]
     then
@@ -317,13 +264,15 @@ process excludeNonIndels {
     input:
         file calls_vcf
     output:
-        path "indels_${calls_vcf}", emit: indels_only_vcf_gz
-        path "indels_${calls_vcf}.tbi", emit: indels_only_vcf_tbi
+        path "*.noIndels.vcf.gz", emit: indels_only_vcf_gz
+        path "*.noIndels.vcf.gz.tbi", emit: indels_only_vcf_tbi
+    script:
+        def name = calls_vcf.simpleName
     """
     zcat $calls_vcf \
     | sed 's/SVTYPE=DUP/SVTYPE=INS/g' \
     | bcftools view -i '(SVTYPE = \"INS\" || SVTYPE = \"DEL\")' \
-    | bgziptabix indels_${calls_vcf}
+    | bgziptabix ${name}.noIndels.vcf.gz
     """
 }
 
@@ -339,9 +288,9 @@ process truvari {
         file truthset_vcf_tbi
         file include_bed
     output:
-        path "summary.json", emit: truvari_json
+        path "*.summary.json", emit: truvari_json
     script:
-        def sample = params.sample ? params.sample : 'sample'
+        def name = calls_vcf.simpleName
     """
     TRUVARI=\$(which truvari)
     python \$TRUVARI bench \
@@ -350,34 +299,21 @@ process truvari {
         -b $truthset_vcf \
         -c $calls_vcf \
         -f $reference \
-        -o $sample \
+        -o $name \
         --includebed $include_bed
-    mv $sample/summary.txt summary.json
+    mv ${name}/summary.txt ${name}.summary.json
     """
 }
 
 
-process report {
+process getVersions {
     label "wf_human_sv"
     cpus 1
-    input:
-        file vcf
-        file bam
-        file bam_index
-        file read_stats
-        file eval_json
     output:
-        path "wf-human-sv-*.html", emit: html
-        path "nanoplot.tar.gz", emit: nanoplot
+        path "versions.txt"
     script:
-        def paramsJSON = new JsonBuilder(params).toPrettyString()
-        def evalResults = eval_json.name != 'OPTIONAL_FILE' ? "--eval_results ${eval_json}" : ""
-        def paramsMap = params.toMapString()
-        def sample = params.sample ? params.sample : 'sample'
-        def report_name = "wf-human-sv-" + params.report_name + '.html'
-
     """
-    # Explicitly get software versions
+    python -c "import pysam; print(f'pysam,{pysam.__version__}')" >> versions.txt
     TRUVARI=\$(which truvari)
     python \$TRUVARI version | sed 's/ /,/' >> versions.txt
     mosdepth --version | sed 's/ /,/' >> versions.txt
@@ -388,33 +324,49 @@ process report {
     samtools --version | head -n 1 | sed 's/ /,/' >> versions.txt
     echo `lra -v | head -n 2 | tail -1 | cut -d ':' -f 2 | sed 's/ /lra,/'` >> versions.txt
     echo `seqtk 2>&1 | head -n 3 | tail -n 1 | cut -d ':' -f 2 | sed 's/ /seqtk,/'` >> versions.txt
+    """
+}
 
+
+process getParams {
+    label "wf_human_sv"
+    cpus 1
+    output:
+        path "params.json"
+    script:
+        def paramsJSON = new JsonBuilder(params).toPrettyString()
+    """
     # Output nextflow params object to JSON
     echo '$paramsJSON' > params.json
+    """
+}
 
-    # Generate wf-human-sv aplanat static report
+
+process report {
+    label "wf_human_sv"
+    cpus 1
+    input:
+        file vcf
+        file read_stats
+        file eval_json
+        file versions
+        path "params.json"
+    output:
+        path "wf-human-sv-*.html", emit: html
+    script:
+        def name = vcf.simpleName
+        def report_name = "wf-human-sv-" + params.report_name + '.html'
+        def evalResults = eval_json.name != 'OPTIONAL_FILE' ? "--eval_results ${eval_json}" : ""
+    """
     report.py \
         $report_name \
-        $sample \
-        $vcf \
+        --vcf $vcf \
         --reads_summary $read_stats \
         --params params.json \
-        --versions versions.txt \
+        --versions $versions \
         --revision $workflow.revision \
         --commit $workflow.commitId \
         $evalResults 
-
-    # Generate supplemental nanoplot report
-    mkdir -p nanoplot
-    NanoPlot \
-        -t $task.cpus \
-        -p nanoplot/${sample}_ \
-        --bam $bam \
-        --raw \
-        --N50 \
-        --title $sample \
-        --downsample 100000
-    tar -czvf nanoplot.tar.gz nanoplot
     """
 }
 
@@ -424,15 +376,12 @@ process report {
 // decoupling the publish from the process steps.
 process output {
     // publish inputs to output directory
-    label "wf_human_sv"
-
-    // publish inputs to output directory
-    publishDir "${params.out_dir}", mode: 'copy', pattern: "*", saveAs: { 
-        f -> params.sample ? "${params.sample}-${f}" : "${f}" }
+    label "pysam"
+    publishDir "${params.out_dir}", mode: 'copy', pattern: "*"
     input:
-        file fname
+        path fname
     output:
-        file fname
+        path fname
     """
     echo "Writing output files"
     """
@@ -442,46 +391,48 @@ process output {
 // Workflow main pipeline
 workflow pipeline {
     take:
+        samples
         reference
-        reads
         target
     main:
+        samples = combineFilterFastq(samples)
         indexLRA(reference)
-        mapLRA(indexLRA.out.ref, indexLRA.out.lra_index, indexLRA.out.mmi_index, reads)
+        mapLRA(indexLRA.out.ref, indexLRA.out.lra_index, indexLRA.out.mmi_index, samples.filtered)
         cuteSV(mapLRA.out.bam, mapLRA.out.bam_index, indexLRA.out.ref)
         mosdepth(mapLRA.out.bam, mapLRA.out.bam_index, target)
         filterCalls(cuteSV.out.vcf, mosdepth.out.mosdepth_bed, target)
         sortVCF(filterCalls.out.vcf)
         indexVCF(sortVCF.out.vcf)
-        fastcatQC(reads)
     emit:
+        reads = samples.filtered
+        read_stats = samples.stats
         ref = indexLRA.out.ref
         vcf = indexVCF.out.vcf_gz
         vcf_index = indexVCF.out.vcf_tbi
         bam = mapLRA.out.bam
         bam_index = mapLRA.out.bam_index
-        read_stats = fastcatQC.out.stats
 }
 
 
 workflow standard {
     take:
+        samples
         reference
-        reads
         target
         optional_file
     main:
         println("================================")
         println("Running workflow: standard mode.")
-        standard = pipeline(reference, reads, target)
+        standard = pipeline(samples, reference, target)
+        software_versions = getVersions()
+        workflow_params = getParams()
         report(
-            standard.vcf,
-            standard.bam, 
-            standard.bam_index,
-            standard.read_stats,
-            optional_file)
+            standard.vcf.collect(),
+            standard.read_stats.collect(),
+            optional_file,
+            software_versions, 
+            workflow_params)
         results = report.out.html.concat(
-            report.out.nanoplot,
             standard.vcf, 
             standard.vcf_index, 
             standard.bam, 
@@ -493,13 +444,13 @@ workflow standard {
 
 workflow benchmark {
     take:
+        samples
         reference
-        reads
         target
     main:
         println("=================================")
         println("Running workflow: benchmark mode.")
-        standard = pipeline(reference, reads, target)
+        standard = pipeline(samples, reference, target)
         truthset = getTruthset()
         filtered = excludeNonIndels(standard.vcf)
         if (params.benchmarkUseTruthsetBed) {
@@ -515,14 +466,15 @@ workflow benchmark {
             truthset.truthset_vcf_gz,
             truthset.truthset_vcf_tbi,
             bedToUse)
+        software_versions = getVersions()
+        workflow_params = getParams()
         report(
-            standard.vcf,
-            standard.bam,
-            standard.bam_index,
-            standard.read_stats,
-            truvari.out.truvari_json)
+            standard.vcf.collect(),
+            standard.read_stats.collect(),
+            truvari.out.truvari_json.collect(),
+            software_versions,
+            workflow_params)
         results = report.out.html.concat(
-            report.out.nanoplot,
             standard.vcf,
             standard.vcf_index, 
             standard.bam, 
@@ -533,26 +485,9 @@ workflow benchmark {
 
 
 // workflow entrypoint
+WorkflowMain.initialise(workflow, params, log)
+
 workflow {
-
-    if (params.help) {
-        helpMessage()
-        exit 1
-    }
-
-    if (!params.fastq) {
-        helpMessage()
-        println("")
-        println("`--fastq` is required")
-        exit 1
-    }
-
-    if (!params.reference) {
-        helpMessage()
-        println("")
-        println("`--reference` is required")
-        exit 1
-    }
 
     // Ready the optional file
     OPTIONAL = file("$projectDir/data/OPTIONAL_FILE")
@@ -561,21 +496,27 @@ workflow {
     println("=================================")
     println("Checking inputs")
 
-    // Acquire reads and reference
-    reads = getFastq(params.fastq)
-    reference = getReference(params.reference)
-    if (!reads || !reference) {
+    // Acquire reads
+    samples = fastq_ingress(
+        params.fastq, params.out_dir, params.samples, params.sanitize_fastq)
+
+    // Acquire reference
+    reference = file(params.reference, type: "file")
+    if (!reference.exists()) {
+        println("--reference: File doesn't exist, check path.")
         exit 1
     }
 
     // Check for target bedfile
-    target = file(params.target_bedfile)
+    target = file(params.target_bedfile, type: "file")
     if (!target.exists()) {
         target = OPTIONAL
     }
 
     // Check min_read_support
-    if (!checkMinReadSupport(params.min_read_support)) {
+    min_read_support = params.min_read_support
+    if (!min_read_support.toString().isInteger() && min_read_support !== 'auto') {
+        println("--min_read_support: Must be integer or 'auto'.")
         exit 1
     }
 
@@ -585,19 +526,11 @@ workflow {
     params.each { it -> println("> $it.key: $it.value") }
 
     // Execute workflow
-    switch(params.mode) {
-        case "standard": 
-            results = standard(reference, reads, target, OPTIONAL)
-            output(results)
-            break;
-        case "benchmark": 
-            results = benchmark(reference, reads, target)
-            output(results)
-            break;
-        default:
-            results = standard(reference, reads, target)
-            output(results)
-            break;
-    } 
+    if (params.benchmark) {
+        results = benchmark(samples, reference, target)
+    } else {
+        results = standard(samples, reference, target, OPTIONAL)
+    }
+    output(results)
 }
 

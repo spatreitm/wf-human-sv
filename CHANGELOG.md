@@ -6,8 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.0.3]
 ### Added
-- benchmarkUseTruthsetBed parameter
-- report_name parameter.
+- Multi-sample analysis is now supported
+
+### Changed
+- Standardised the CLI and reporting with other epi2me-labs workflows
+- Benchmarking now uses an auto-generated bedfile from ref chromosomes by default
+- Added benchmarkUseTruthsetBed to permit using truth-set bed for benchmarking instead
 
 ## [v0.0.2]
 ### Fixed
