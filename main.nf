@@ -119,7 +119,6 @@ process mosdepth {
         path "*.regions.bed.gz", emit: mosdepth_bed
     script:
         def name = bam.simpleName
-        def target_bed = target_bed.name != 'OPTIONAL_FILE' ? "${target_bed}" : 1000000
     """
 	mosdepth \
         -x \
@@ -143,10 +142,9 @@ process filterCalls {
     script:
         def name = vcf.simpleName
         def sv_types_joined = params.sv_types.split(',').join(" ")
-        def target_bed = target_bed.name != 'OPTIONAL_FILE' ? "--target_bedfile ${target_bed}" : ""
     """
     get_filter_calls_command.py \
-        $target_bed \
+        --target_bedfile $target_bed \
         --vcf $vcf \
         --depth_bedfile $mosdepth_bed \
         --min_sv_length $params.min_sv_length \
@@ -219,26 +217,24 @@ process getTruthset {
 }
 
 
-process intersectCallsHighconf {
+process intersectBedWithTruthset {
     label "wf_human_sv"
     cpus 1
     input:
-        file calls_vcf
+        file target_bed
         file truthset_bed
     output:
-        path "*.eval_highconf.bed", emit: calls_highconf_bed
-    script:
-        def name = calls_vcf.simpleName
+        path "target_truthset.bed", emit: intersected_bed
     """
     bedtools intersect \
         -a $truthset_bed \
-        -b $calls_vcf \
-        -u > ${name}.eval_highconf.bed
+        -b $target_bed \
+        > target_truthset.bed
 
-    if [ ! -s eval_highconf.bed ]
+    if [ ! -s target_truthset.bed ]
     then
-        echo "No overlaps found between calls and truthset"
-        echo "Chr names in your reference and truthset may differ"
+        echo "No overlaps found between truth and target"
+        echo "Chr names in your target or reference and truthset may differ"
         exit 1
     fi
     """
@@ -453,19 +449,16 @@ workflow benchmark {
         standard = pipeline(samples, reference, target)
         truthset = getTruthset()
         filtered = excludeNonIndels(standard.vcf)
-        if (params.benchmarkUseTruthsetBed) {
-            bedToUse = truthset.truthset_bed
-        } else {
-            bedToUse = getAllChromosomesBed(
-                reference).all_chromosomes_bed
-        }
+        intersected = intersectBedWithTruthset(
+            target, truthset.truthset_bed)
+            .intersected_bed
         truvari(
             standard.ref,
             filtered.indels_only_vcf_gz,
             filtered.indels_only_vcf_tbi,
             truthset.truthset_vcf_gz,
             truthset.truthset_vcf_tbi,
-            bedToUse)
+            intersected)
         software_versions = getVersions()
         workflow_params = getParams()
         report(
@@ -508,9 +501,13 @@ workflow {
     }
 
     // Check for target bedfile
-    target = file(params.target_bedfile, type: "file")
-    if (!target.exists()) {
-        target = OPTIONAL
+    if (params.target_bedfile === 'NO_TARGET') {
+        target = getAllChromosomesBed(reference).all_chromosomes_bed
+    } else {
+        target = file(params.target_bedfile, type: "file")
+        if (!target.exists()) {
+            println("--target_bedfile: File doesn't exist, check path.")
+        }
     }
 
     // Check min_read_support
@@ -519,11 +516,6 @@ workflow {
         println("--min_read_support: Must be integer or 'auto'.")
         exit 1
     }
-
-    // Print all params
-    println("=================================")
-    println("Summarising parameters")
-    params.each { it -> println("> $it.key: $it.value") }
 
     // Execute workflow
     if (params.benchmark) {

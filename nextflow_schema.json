@@ -61,10 +61,6 @@
                     "default": "NO_TARGET",
                     "description": "BED file, SVs will only be called in these regions"
                 },
-                "benchmarkUseTruthsetBed": {
-                    "type": "boolean",
-                    "description": "Calculate benchmarks using the truthset BED rather than an auto-generated bedfile covering reference contigs"
-                },
                 "truthset_vcf": {
                     "type": "string",
                     "default": "https://ftp-trace.ncbi.nlm.nih.gov/giab/ftp/data/AshkenazimTrio/analysis/NIST_SVs_Integration_v0.6/HG002_SVs_Tier1_v0.6.vcf.gz",
