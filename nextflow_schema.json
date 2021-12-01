@@ -111,6 +111,11 @@
                     "default": 999999,
                     "description": "Maximum read length to retain for calling"
                 },
+                "min_qual": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Minimum read quality to retain for calling"
+                },
                 "min_sv_length": {
                     "type": "integer",
                     "default": 30,
