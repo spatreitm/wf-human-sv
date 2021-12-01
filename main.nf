@@ -19,7 +19,7 @@ process combineFilterFastq {
     fastcat \
         -a $params.min_len \
         -b $params.max_len \
-        -q 10 \
+        -q $params.min_qual \
         -s ${sample_name} \
         -r ${sample_name}.stats \
         -x ${directory} > ${sample_name}.fastq
