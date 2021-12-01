@@ -106,7 +106,7 @@ def main():
     parser.add_argument(
         "--reads_summary",
         nargs='+',
-        required=True)
+        required=False)
     parser.add_argument(
         "--eval_results",
         nargs='+',
@@ -128,10 +128,8 @@ def main():
         "wf-human-sv report", "wf-human-sv",
         revision=args.revision, commit=args.commit)
 
-    for index, sample in enumerate(zip(args.vcf, args.reads_summary)):
-        sample_name = sample[0].split('.')[0]
-        sample_vcf = sample[0]
-        sample_summary = sample[1]
+    for index, sample_vcf in enumerate(args.vcf):
+        sample_name = sample_vcf.split('.')[0]
 
         #
         # Front matter
@@ -145,20 +143,27 @@ def main():
         #
         # Input dataset QC
         #
-        reads_summary_df = pd.read_csv(sample_summary, sep='\t')
-        read_qual = fastcat.read_quality_plot(reads_summary_df)
-        read_length = fastcat.read_length_plot(reads_summary_df)
-        read_length.x_range = Range1d(0, 100000)
-        read_length.xaxis.formatter = BasicTickFormatter(use_scientific=False)
-        section = report_doc.add_section()
-        section.markdown("### Read Quality Control")
-        section.markdown(
-            "This sections displays basic QC"
-            " metrics indicating read data quality.")
-        section.plot(layout(
-            [[read_length, read_qual]],
-            sizing_mode="stretch_width")
-        )
+        sample_summary = None
+        for summary in args.reads_summary or []:
+            if summary.split('.')[0] == sample_name:
+                sample_summary = summary
+
+        if sample_summary:
+            reads_summary_df = pd.read_csv(sample_summary, sep='\t')
+            read_qual = fastcat.read_quality_plot(reads_summary_df)
+            read_length = fastcat.read_length_plot(reads_summary_df)
+            read_length.x_range = Range1d(0, 100000)
+            read_length.xaxis.formatter = BasicTickFormatter(
+                use_scientific=False)
+            section = report_doc.add_section()
+            section.markdown("### Read Quality Control")
+            section.markdown(
+                "This sections displays basic QC"
+                " metrics indicating read data quality.")
+            section.plot(layout(
+                [[read_length, read_qual]],
+                sizing_mode="stretch_width")
+            )
 
         #
         # Variant calls

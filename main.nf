@@ -11,7 +11,7 @@ process combineFilterFastq {
     label "wf_human_sv"
     cpus 1
     input:
-        tuple path(directory), val(sample_name)
+        tuple path(directory), val(sample_name), val(sample_type)
     output:
         path "${sample_name}.fastq", emit: filtered
         path "${sample_name}.stats", emit: stats
@@ -86,7 +86,19 @@ process cuteSV {
         path "*.cutesv.vcf", emit: vcf
     script:
         def name = bam.simpleName
+        def simpleRef = reference.simpleName
     """
+    # In case of --bam, repeat the gzip check
+    REF=$reference
+    if [[ $reference == *.gz ]]
+    then
+        cp -L $reference $simpleRef
+        rm $reference
+        mv $simpleRef ${simpleRef}.gz
+        gunzip ${simpleRef}.gz
+        REF=$simpleRef
+    fi
+
     cuteSV \
         --threads $task.cpus \
         --sample $name \
@@ -101,7 +113,7 @@ process cuteSV {
         --max_cluster_bias_DEL $params.max_cluster_bias_DEL \
         --diff_ratio_merging_DEL $params.diff_ratio_merging_DEL \
         $bam \
-        $reference \
+        \$REF \
         ${name}.cutesv.vcf \
         .
 	"""
@@ -352,12 +364,13 @@ process report {
     script:
         def name = vcf.simpleName
         def report_name = "wf-human-sv-" + params.report_name + '.html'
+        def readStats = read_stats ? "--reads_summary ${read_stats}" : ""
         def evalResults = eval_json.name != 'OPTIONAL_FILE' ? "--eval_results ${eval_json}" : ""
     """
     report.py \
         $report_name \
         --vcf $vcf \
-        --reads_summary $read_stats \
+        $readStats \
         --params params.json \
         --versions $versions \
         --revision $workflow.revision \
@@ -384,8 +397,8 @@ process output {
 }
 
 
-// Workflow main pipeline
-workflow pipeline {
+// Workflow subworkflows
+workflow readAlign {
     take:
         samples
         reference
@@ -394,86 +407,171 @@ workflow pipeline {
         samples = combineFilterFastq(samples)
         indexLRA(reference)
         mapLRA(indexLRA.out.ref, indexLRA.out.lra_index, indexLRA.out.mmi_index, samples.filtered)
-        cuteSV(mapLRA.out.bam, mapLRA.out.bam_index, indexLRA.out.ref)
-        mosdepth(mapLRA.out.bam, mapLRA.out.bam_index, target)
-        filterCalls(cuteSV.out.vcf, mosdepth.out.mosdepth_bed, target)
-        sortVCF(filterCalls.out.vcf)
-        indexVCF(sortVCF.out.vcf)
     emit:
         reads = samples.filtered
         read_stats = samples.stats
         ref = indexLRA.out.ref
-        vcf = indexVCF.out.vcf_gz
-        vcf_index = indexVCF.out.vcf_tbi
         bam = mapLRA.out.bam
         bam_index = mapLRA.out.bam_index
 }
 
 
-workflow standard {
+workflow variantCall {
+    take:
+        bam
+        bai
+        reference
+        target_bed
+    main:
+        cuteSV(bam, bai, reference)
+        mosdepth(bam, bai, target_bed)
+        filterCalls(cuteSV.out.vcf, mosdepth.out.mosdepth_bed, target_bed)
+        sortVCF(filterCalls.out.vcf)
+        indexVCF(sortVCF.out.vcf)
+    emit:
+        vcf = indexVCF.out.vcf_gz
+        vcf_index = indexVCF.out.vcf_tbi
+}
+
+
+workflow runReport {
+    take:
+        vcf
+        read_stats
+        eval_json
+    main:
+        software_versions = getVersions()
+        workflow_params = getParams()
+        report(
+            vcf.collect(),
+            read_stats.collect(),
+            eval_json,
+            software_versions, 
+            workflow_params)
+    emit:
+        html = report.out.html
+}
+
+
+workflow runBenchmark {
+    take:
+        vcf
+        reference
+        target
+    main:
+        truthset = getTruthset()
+        filtered = excludeNonIndels(vcf)
+        intersected = intersectBedWithTruthset(
+            target, truthset.truthset_bed).intersected_bed
+        truvari(
+            reference,
+            filtered.indels_only_vcf_gz,
+            filtered.indels_only_vcf_tbi,
+            truthset.truthset_vcf_gz,
+            truthset.truthset_vcf_tbi,
+            intersected)
+    emit:
+        json = truvari.out.truvari_json
+}
+
+
+// Workflow entrypoints
+workflow fastq {
     take:
         samples
         reference
         target
         optional_file
     main:
-        println("================================")
-        println("Running workflow: standard mode.")
-        standard = pipeline(samples, reference, target)
-        software_versions = getVersions()
-        workflow_params = getParams()
-        report(
-            standard.vcf.collect(),
-            standard.read_stats.collect(),
-            optional_file,
-            software_versions, 
-            workflow_params)
-        results = report.out.html.concat(
-            standard.vcf, 
-            standard.vcf_index, 
-            standard.bam, 
-            standard.bam_index)
+        println("=============================================")
+        println("Running workflow | .fq input | standard mode.")
+        aligned = readAlign(samples, reference, target)
+        called = variantCall(aligned.bam, aligned.bam_index,
+            aligned.ref, target)
+        report = runReport(
+            called.vcf.collect(),
+            aligned.read_stats.collect(),
+            optional_file)
     emit:
-        results
+        report.html.concat(
+            called.vcf,
+            called.vcf_index,
+            aligned.bam,
+            aligned.bam_index)
 }
 
 
-workflow benchmark {
+workflow bam {
+    take:
+        bam
+        bam_index
+        reference
+        target
+        optional_file
+    main:
+        println("==============================================")
+        println("Running workflow | .bam input | standard mode.")
+        called = variantCall(bam, bam_index, reference, target)
+        report = runReport(
+            called.vcf.collect(),
+            [],
+            optional_file)
+    emit:
+        report.html.concat(
+            called.vcf,
+            called.vcf_index,
+            Channel.from([bam]),
+            Channel.from([bam_index]))
+}
+
+
+workflow benchmark_fastq {
     take:
         samples
         reference
         target
     main:
-        println("=================================")
-        println("Running workflow: benchmark mode.")
-        standard = pipeline(samples, reference, target)
-        truthset = getTruthset()
-        filtered = excludeNonIndels(standard.vcf)
-        intersected = intersectBedWithTruthset(
-            target, truthset.truthset_bed)
-            .intersected_bed
-        truvari(
-            standard.ref,
-            filtered.indels_only_vcf_gz,
-            filtered.indels_only_vcf_tbi,
-            truthset.truthset_vcf_gz,
-            truthset.truthset_vcf_tbi,
-            intersected)
-        software_versions = getVersions()
-        workflow_params = getParams()
-        report(
-            standard.vcf.collect(),
-            standard.read_stats.collect(),
-            truvari.out.truvari_json.collect(),
-            software_versions,
-            workflow_params)
-        results = report.out.html.concat(
-            standard.vcf,
-            standard.vcf_index, 
-            standard.bam, 
-            standard.bam_index)
+        println("==============================================")
+        println("Running workflow | .fq input | benchmark mode.")
+        aligned = readAlign(samples, reference, target)
+        called = variantCall(aligned.bam, aligned.bam_index,
+            aligned.ref, target)
+        benchmark = runBenchmark(called.vcf, aligned.ref, target)
+        report = runReport(
+            called.vcf.collect(),
+            aligned.read_stats.collect(),
+            benchmark.json.collect())
     emit:
-        results
+        report.html.concat(
+            called.vcf,
+            called.vcf_index,
+            aligned.bam,
+            aligned.bam_index)
+}
+
+
+workflow benchmark_bam {
+    take:
+        bam
+        bam_index
+        reference
+        target
+        optional_file
+    main:
+        println("==============================================")
+        println("Running workflow | .bam input | benchmark mode.")
+        called = variantCall(bam, bam_index, reference, target)
+        benchmark = runBenchmark(called.vcf, reference, target)
+        report = runReport(
+            called.vcf.collect(),
+            [],
+            benchmark.json.collect())
+    emit:
+        report.html.concat(
+            called.vcf,
+            called.vcf_index,
+            Channel.from([bam]),
+            Channel.from([bam_index]))
 }
 
 
@@ -486,12 +584,8 @@ workflow {
     OPTIONAL = file("$projectDir/data/OPTIONAL_FILE")
 
     // Checking user parameters
-    println("=================================")
+    println("==============================================")
     println("Checking inputs")
-
-    // Acquire reads
-    samples = fastq_ingress(
-        params.fastq, params.out_dir, params.samples, params.sanitize_fastq)
 
     // Acquire reference
     reference = file(params.reference, type: "file")
@@ -517,12 +611,38 @@ workflow {
         exit 1
     }
 
-    // Execute workflow
-    if (params.benchmark) {
-        results = benchmark(samples, reference, target)
+    // Acquire input and execute
+    if (params.bam) {
+        println('Checking .bam')
+        bam = file(params.bam, type: "file")
+        if (!bam.exists()) {
+            println("--bam: File doesn't exist, check path.")
+            exit 1
+        }
+        println('Checking .bai')
+        bai = file(params.bai, type: "file")
+        if (!bai.exists()) {
+            println("--bai: File doesn't exist, check path.")
+            exit 1
+        }
+        if (params.benchmark) {
+            results = benchmark_bam(bam, bai, reference, target, OPTIONAL)
+        } else {
+            results = bam(bam, bai, reference, target, OPTIONAL)
+        }
+        output(results)
     } else {
-        results = standard(samples, reference, target, OPTIONAL)
+        samples = fastq_ingress(
+            params.fastq, params.out_dir, params.sample,
+            params.sample_sheet, params.sanitize_fastq
+        )
+        if (params.benchmark) {
+            results = benchmark_fastq(samples, reference, target)
+        } else {
+            results = fastq(samples, reference, target, OPTIONAL)
+        }
+        output(results)
     }
-    output(results)
+    
 }
 
