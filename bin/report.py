@@ -174,7 +174,8 @@ def main():
             "This section displays a summary view"
             " of the variant calls made by cuteSV.")
 
-        chroms = [str(x) for x in range(1, 23)] + ['X', 'Y']
+        # Assuming we are using hg37 or 38 here
+        chroms_37 = [str(x) for x in range(1, 23)] + ['X', 'Y']
         sv_types = (('INS', 'Insertion'), ('DEL', 'Deletion'))
         sv_colours = ['red', 'green']
 
@@ -183,7 +184,8 @@ def main():
         vcf_df = vcf_df.drop('RNAMES', 1)
         vcf_df['CHROM'] = vcf_df['CHROM'].astype(str)
         vcf_df['SVLEN'] = vcf_df['SVLEN'].astype(int)
-        vcf_df = vcf_df.loc[vcf_df['CHROM'].isin(chroms)]
+        vcf_df['CHROM'] = vcf_df['CHROM'].str.replace('chr', '')
+        vcf_df = vcf_df.loc[vcf_df['CHROM'].isin(chroms_37)]
 
         table = get_sv_summary_table(vcf_df)
         karyograms = gridplot(
