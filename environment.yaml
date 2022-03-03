@@ -15,15 +15,13 @@ dependencies:
     - lra==1.1.2
     - seqtk
     - cutesv
-    - samtools
+    - samtools >=1.8
     - bedtools
     - bcftools
     - vcftools
     - vcflib
     - mosdepth
-    - NanoPlot==1.38.0
     - pip:
         - catfishq
         - pyfaidx
         - Truvari
-        
