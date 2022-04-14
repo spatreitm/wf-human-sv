@@ -8,7 +8,7 @@ import sys
 
 import aplanat
 from aplanat import bio, hist, report
-from aplanat.components import fastcat
+from aplanat.components import depthcoverage, fastcat
 import aplanat.graphics
 from bokeh.layouts import gridplot, layout
 from bokeh.models import BasicTickFormatter, Range1d
@@ -112,6 +112,10 @@ def main():
         nargs='+',
         required=False)
     parser.add_argument(
+        "--read_depth",
+        nargs='+',
+        required=False)
+    parser.add_argument(
         "--revision", default='unknown',
         help="git branch/tag of the executed workflow")
     parser.add_argument(
@@ -148,6 +152,10 @@ def main():
             if summary.split('.')[0] == sample_name:
                 sample_summary = summary
 
+        for read_depth in args.read_depth:
+            if read_depth.split('.')[0] == sample_name:
+                read_depth = read_depth
+
         if sample_summary:
             reads_summary_df = pd.read_csv(sample_summary, sep='\t')
             read_qual = fastcat.read_quality_plot(reads_summary_df)
@@ -164,6 +172,14 @@ def main():
                 [[read_length, read_qual]],
                 sizing_mode="stretch_width")
             )
+            rd_plot = depthcoverage.cumulative_depth_from_dist(read_depth)
+            section = report_doc.add_section()
+            section.markdown("### Genome coverage")
+            section.markdown(
+                "Genome wide read coverage")
+            section.plot(gridplot(
+                [rd_plot],
+                ncols=2))
 
         #
         # Variant calls
@@ -265,16 +281,17 @@ def main():
     #
     section = report_doc.add_section()
     section.markdown("## Workflow parameters")
-    section.markdown("The table below highlights values of"
-                     " the main parameters used in this analysis.")
+    section.markdown(
+        "The table below highlights values of"
+        " the main parameters used in this analysis.")
     params = []
     with open(args.params) as f:
         params_data = json.load(f)
     for key, value in params_data.items():
         params.append((key, value))
     df_params = pd.DataFrame(params, columns=['Key', 'Value'])
-    section.table(df_params, sortable=False, paging=False,
-                  index=False, searchable=False)
+    section.table(
+        df_params, sortable=False, paging=False, index=False, searchable=False)
 
     #
     # Software versions

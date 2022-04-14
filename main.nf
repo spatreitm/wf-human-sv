@@ -129,6 +129,7 @@ process mosdepth {
         file target_bed
     output:
         path "*.regions.bed.gz", emit: mosdepth_bed
+        path "*.global.dist.txt", emit: mosdepth_dist
     script:
         def name = bam.simpleName
     """
@@ -356,6 +357,7 @@ process report {
     input:
         file vcf
         file read_stats
+        file read_depth
         file eval_json
         file versions
         path "params.json"
@@ -371,6 +373,7 @@ process report {
         $report_name \
         --vcf $vcf \
         $readStats \
+        --read_depth $read_depth \
         --params params.json \
         --versions $versions \
         --revision $workflow.revision \
@@ -431,6 +434,7 @@ workflow variantCall {
     emit:
         vcf = indexVCF.out.vcf_gz
         vcf_index = indexVCF.out.vcf_tbi
+        read_depth = mosdepth.out.mosdepth_dist
 }
 
 
@@ -438,6 +442,7 @@ workflow runReport {
     take:
         vcf
         read_stats
+        depth_bed
         eval_json
     main:
         software_versions = getVersions()
@@ -445,6 +450,7 @@ workflow runReport {
         report(
             vcf.collect(),
             read_stats.collect(),
+            depth_bed.collect(),
             eval_json,
             software_versions, 
             workflow_params)
@@ -491,6 +497,7 @@ workflow fastq {
         report = runReport(
             called.vcf.collect(),
             aligned.read_stats.collect(),
+            called.read_depth.collect(),
             optional_file)
     emit:
         report.html.concat(
@@ -515,6 +522,7 @@ workflow bam {
         report = runReport(
             called.vcf.collect(),
             [],
+            called.read_depth.collect(),
             optional_file)
     emit:
         report.html.concat(
@@ -540,6 +548,7 @@ workflow benchmark_fastq {
         report = runReport(
             called.vcf.collect(),
             aligned.read_stats.collect(),
+            called.read_depth.collect(),
             benchmark.json.collect())
     emit:
         report.html.concat(
@@ -565,6 +574,7 @@ workflow benchmark_bam {
         report = runReport(
             called.vcf.collect(),
             [],
+            called.read_depth.collect(),
             benchmark.json.collect())
     emit:
         report.html.concat(
