@@ -214,7 +214,7 @@
         },
         "wfversion": {
             "type": "string",
-            "default": "v0.0.5",
+            "default": "v0.0.6",
             "hidden": true
         },
         "monochrome_logs": {
@@ -230,5 +230,9 @@
             "type": "boolean",
             "hidden": true
         }
+    },
+    "docs": {
+        "intro": "## Introduction\n\nThe pipeline performs the following steps:\n* Maps reads using [lra](https://github.com/ChaissonLab/LRA)\n* Calls variants using [cuteSV](https://github.com/tjiangHIT/cuteSV)\n* Filters variants by minimum/maximum length, read support, or type (e.g. insertion, deletion, etc.)\n* Optionally evaluates yours calls against a truthset using [truvari](https://github.com/spiralgenetics/truvari)\n",
+        "links": "## Useful links\n\n* [nextflow](https://www.nextflow.io/)\n* [docker](https://www.docker.com/products/docker-desktop)\n* [conda](https://docs.conda.io/en/latest/miniconda.html)"
     }
 }

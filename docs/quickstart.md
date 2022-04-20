@@ -1,12 +1,3 @@
-# wf-human-sv
-This workflow provides an easy way to call structural variants in human genomic data.
-## Introduction
-
-The pipeline performs the following steps:
-* Maps reads using [lra](https://github.com/ChaissonLab/LRA)
-* Calls variants using [cuteSV](https://github.com/tjiangHIT/cuteSV)
-* Filters variants by minimum/maximum length, read support, or type (e.g. insertion, deletion, etc.)
-* Optionally evaluates yours calls against a truthset using [truvari](https://github.com/spiralgenetics/truvari)
 ## Quickstart
 
 The workflow uses [nextflow](https://www.nextflow.io/) to manage compute and 
@@ -39,8 +30,3 @@ The primary outputs of the workflow include:
 * A sorted, indexed VCF file containing the SV calls made.
 * A sorted, indexed BAM file containing the alignments used to make the calls. 
 * an HTML report document detailing the primary findings of the workflow.
-## Useful links
-
-* [nextflow](https://www.nextflow.io/)
-* [docker](https://www.docker.com/products/docker-desktop)
-* [conda](https://docs.conda.io/en/latest/miniconda.html)
